@@ -179,6 +179,25 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 		return
 	}
 
+	// Application errors: the GPU should still be healthy
+	// Reference: doc/skipped-xids.md
+	applicationErrorXids := []uint64{
+		13, // Graphics Engine Exception
+		31, // GPU memory page fault
+		43, // GPU stopped processing
+		45, // Preemptive cleanup, due to previous errors
+		68, // Video processor exception
+	}
+
+	skippedXids := make(map[uint64]bool)
+	for _, id := range applicationErrorXids {
+		skippedXids[id] = true
+	}
+
+	for _, additionalXid := range getAdditionalXids(disableHealthChecks) {
+		skippedXids[additionalXid] = true
+	}
+
 	eventSet := nvml.NewEventSet()
 	defer nvml.DeleteEventSet(eventSet)
 
@@ -209,10 +228,8 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 			continue
 		}
 
-		// FIXME: formalize the full list and document it.
-		// http://docs.nvidia.com/deploy/xid-errors/index.html#topic_4
-		// Application errors: the GPU should still be healthy
-		if e.Edata == 31 || e.Edata == 43 || e.Edata == 45 {
+		if skippedXids[e.Edata] {
+			log.Printf("Skipping event %+v", e)
 			continue
 		}
 
